@@ -1,13 +1,13 @@
 import asyncio
 import json
+import logging
 import uuid
-from datetime import datetime
 from typing import Any, AsyncIterable, List
 from google.adk.models.lite_llm import LiteLlm
 
 import httpx
 import nest_asyncio
-from a2a.client import A2ACardResolver, A2AClient
+from a2a.client import A2ACardResolver
 from a2a.types import (
     AgentCard,
     Message,
@@ -20,7 +20,6 @@ from a2a.types import (
     Task,
     TextPart,
 )
-
 from dotenv import load_dotenv
 from google.adk import Agent
 from google.adk.agents.readonly_context import ReadonlyContext
@@ -29,40 +28,99 @@ from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.adk.tools.tool_context import ToolContext
-from google.genai import types
+from openai.types.chat import ChatCompletionMessage
+
+from .remote_connection import RemoteAgentConnections
+
+# Configuração do logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Carrega variáveis de ambiente e configura o asyncio
 load_dotenv()
 nest_asyncio.apply()
 
+# Configuração dos agentes remotos
+REMOTE_AGENTS = [
+    "http://localhost:10002",  # check_budget_agent
+    "http://localhost:10003",  # check_planning_agent
+    "http://localhost:10004",  # check_legal_agent
+]
 
-def create_agent(agents_info: str = "Nenhum agente configurado.") -> Agent:
-    """
-    Cria uma instância do agente com as configurações padrão.
-    
-    Args:
-        agents_info: Informações sobre os agentes disponíveis
-        
-    Returns:
-        Agent: Instância do agente configurado
-    """
-    return Agent(
-        model=LiteLlm("openai/gpt-4.1-nano"),
-        name="financial_orchestrator",
-        instruction=f"""
+
+class FinancialOrchestratorAgent:
+    """O agente orquestrador financeiro."""
+
+    def __init__(self):
+        self.remote_agent_connections: dict[str, RemoteAgentConnections] = {}
+        self.cards: dict[str, AgentCard] = {}
+        self.agents: str = ""
+        self._agent = self.create_agent()
+        self._user_id = "finance_orchestrator"
+        self._runner = Runner(
+            app_name=self._agent.name,
+            agent=self._agent,
+            artifact_service=InMemoryArtifactService(),
+            session_service=InMemorySessionService(),
+            memory_service=InMemoryMemoryService(),
+        )
+
+    async def _async_init_components(self, remote_agent_addresses: List[str]):
+        async with httpx.AsyncClient(timeout=30) as client:
+            for address in remote_agent_addresses:
+                card_resolver = A2ACardResolver(client, address)
+                try:
+                    card = await card_resolver.get_agent_card()
+                    remote_connection = RemoteAgentConnections(
+                        agent_card=card, agent_url=address
+                    )
+                    self.remote_agent_connections[card.name] = remote_connection
+                    self.cards[card.name] = card
+                except httpx.ConnectError as e:
+                    print(f"ERROR: Failed to get agent card from {address}: {e}")
+                except Exception as e:
+                    print(f"ERROR: Failed to initialize connection for {address}: {e}")
+
+        agent_info = [
+            json.dumps({"name": card.name, "description": card.description})
+            for card in self.cards.values()
+        ]
+        print("agent_info:", agent_info)
+        self.agents = "\n".join(agent_info) if agent_info else "No agents found"
+
+    @classmethod
+    async def create(cls, remote_agent_addresses: List[str]):
+        instance = cls()
+        await instance._async_init_components(remote_agent_addresses)
+        return instance
+
+    def create_agent(self) -> Agent:
+        return Agent(
+            model=LiteLlm("openai/gpt-4.1-nano"),
+            name="financial_orchestrator",
+            instruction=self.root_instruction,
+            description="Agente que coordena verificações de despesas com agentes especializados.",
+            tools=[self.send_message],
+        )
+
+    def root_instruction(self, context: ReadonlyContext) -> str:
+        return f"""
         **Papel:** Você é o Agente Orquestrador Financeiro, responsável por coordenar a aprovação de despesas de negócios.
 
         **Diretrizes Principais:**
 
         * **Coordenação de Verificações:**
-            * Use o agente de check_budget_agent para verificar se há dinheiro disponível
-            * Use o agente de check_planning_agent para verificar se a despesa está no orçamento
-            * Use o agente de check_legal_agent para verificar contratos com fornecedores
+            * Use APENAS os agentes que estão disponíveis na lista abaixo
+            * Se um agente não estiver disponível, NÃO tente chamá-lo
+            * Use o agente de check_budget_agent (se disponível) para verificar se há dinheiro disponível
+            * Use o agente de check_planning_agent (se disponível) para verificar se a despesa está no orçamento
+            * Use o agente de check_legal_agent (se disponível) para verificar contratos com fornecedores
 
         * **Processo de Decisão:**
-            * Aguarde as respostas de todos os agentes antes de tomar uma decisão
-            * Considere todas as verificações ao aprovar ou rejeitar uma despesa
+            * Use APENAS os agentes que estão disponíveis
+            * Considere todas as verificações possíveis com os agentes disponíveis
             * Documente claramente o motivo da decisão
+            * Deixe claro quais agentes foram usados e quais não estavam disponíveis
 
         * **Comunicação:**
             * Mantenha o usuário informado sobre o progresso das verificações
@@ -71,132 +129,25 @@ def create_agent(agents_info: str = "Nenhum agente configurado.") -> Agent:
 
         * **Formato da Resposta:**
             * Use marcadores para melhor legibilidade
-            * Inclua o status de cada verificação
+            * Inclua o status de cada verificação realizada
             * Apresente a decisão final claramente (✅ Aprovado ou ❌ Rejeitado)
-
-        **Data Atual:** {datetime.now().strftime("%Y-%m-%d")}
+            * Uma decisão só pode ser aprovada se todos os agentes disponíveis aprovarem a despesa
 
         <Agentes Disponíveis>
-        {agents_info}
+        {self.agents}
         </Agentes Disponíveis>
-        """,
-        description="Agente que coordena verificações de despesas com agentes especializados.",
-    )
 
-
-class RemoteAgentConnections:
-    """Classe para gerenciar conexões com agentes remotos."""
-    
-    def __init__(self, agent_card: AgentCard, agent_url: str):
-        self.agent_card = agent_card
-        self.agent_url = agent_url
-
-
-class FinancialOrchestratorAgent:
-    """
-    Agente responsável por aprovar ou rejeitar despesas de negócios
-    coordenando verificações com agentes especializados em orçamento,
-    planejamento e aspectos legais.
-    """
-
-    def __init__(self):
-        """Inicializa o agente financeiro."""
-        self.remote_agent_connections = {}
-        self.cards = {}
-        self.agents = "Nenhum agente configurado."
-        self._agent = create_agent(self.agents)
-        self._user_id = "finance_orchestrator"
-        self._runner = self._setup_runner()
-
-    def _setup_runner(self) -> Runner:
-        """Configura o runner do agente."""
-        return Runner(
-            app_name=self._agent.name,
-            agent=self._agent,
-            artifact_service=InMemoryArtifactService(),
-            session_service=InMemorySessionService(),
-            memory_service=InMemoryMemoryService(),
-        )
-
-    async def initialize(self, remote_agent_addresses: List[str]) -> None:
+        IMPORTANTE: Use APENAS os agentes listados acima. Se um agente não estiver na lista, ele não está disponível e não deve ser chamado.
         """
-        Inicializa as conexões com os agentes remotos.
-        
-        Args:
-            remote_agent_addresses: Lista de endereços dos agentes remotos
-        """
-        if not remote_agent_addresses:
-            print("Aviso: Nenhum agente remoto configurado. O agente funcionará em modo standalone.")
-            return
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            for address in remote_agent_addresses:
-                await self._initialize_remote_agent(client, address)
-
-        self._update_agent_info()
-
-    async def _initialize_remote_agent(self, client: httpx.AsyncClient, address: str) -> None:
-        """Inicializa um agente remoto específico."""
-        try:
-            card_resolver = A2ACardResolver(client, address)
-            card = await card_resolver.get_agent_card()
-            
-            remote_connection = RemoteAgentConnections(
-                agent_card=card,
-                agent_url=address
-            )
-            
-            self.remote_agent_connections[card.name] = remote_connection
-            self.cards[card.name] = card
-            print(f"Agente conectado com sucesso: {card.name}")
-            
-        except Exception as e:
-            print(f"AVISO: Não foi possível conectar ao agente em {address}: {e}")
-
-    def _update_agent_info(self) -> None:
-        """Atualiza as informações dos agentes disponíveis."""
-        if not self.cards:
-            return
-
-        agent_info = [
-            json.dumps({"name": card.name, "description": card.description})
-            for card in self.cards.values()
-        ]
-        
-        self.agents = "\n".join(agent_info)
-        print("Agentes disponíveis:", self.agents)
-        # Atualiza o agente com as novas informações
-        self._agent = create_agent(self.agents)
 
     async def stream(self, query: str, session_id: str) -> AsyncIterable[dict[str, Any]]:
-        """
-        Processa uma consulta e retorna os resultados em stream.
-        
-        Args:
-            query: A consulta a ser processada
-            session_id: ID da sessão atual
-            
-        Yields:
-            Dicionário com atualizações do processamento
-        """
-        session = await self._get_or_create_session(session_id)
-        content = types.Content(role="user", parts=[types.Part.from_text(text=query)])
-
-        async for event in self._runner.run_async(
-            user_id=self._user_id,
-            session_id=session.id,
-            new_message=content
-        ):
-            yield self._process_event(event)
-
-    async def _get_or_create_session(self, session_id: str) -> Any:
-        """Obtém ou cria uma nova sessão."""
+        """Streams a resposta do agente para uma consulta."""
         session = await self._runner.session_service.get_session(
             app_name=self._agent.name,
             user_id=self._user_id,
             session_id=session_id,
         )
-
+        content = ChatCompletionMessage(role="user", content=query)
         if session is None:
             session = await self._runner.session_service.create_session(
                 app_name=self._agent.name,
@@ -204,19 +155,94 @@ class FinancialOrchestratorAgent:
                 state={},
                 session_id=session_id,
             )
+        async for event in self._runner.run_async(
+            user_id=self._user_id, session_id=session.id, new_message=content
+        ):
+            if event.is_final_response():
+                response = ""
+                if event.content and event.content.parts and event.content.parts[0].text:
+                    response = "\n".join([p.text for p in event.content.parts if p.text])
+                yield {"is_task_complete": True, "content": response}
+            else:
+                yield {"is_task_complete": False, "updates": "O agente financeiro está pensando..."}
 
-        return session
+    async def send_message(self, agent_name: str, task: str, tool_context: ToolContext):
+        """Envia uma tarefa para um agente remoto."""
+        if agent_name not in self.remote_agent_connections:
+            logger.warning(f"Tentativa de chamar agente não disponível: {agent_name}")
+            return [{"text": f"Agente {agent_name} não está disponível no momento."}]
 
-    def _process_event(self, event: Any) -> dict[str, Any]:
-        """Processa um evento do stream."""
-        if event.is_final_response():
-            response = ""
-            if event.content and event.content.parts and event.content.parts[0].text:
-                response = "\n".join([p.text for p in event.content.parts if p.text])
-            return {"is_task_complete": True, "content": response}
-        
-        return {"is_task_complete": False, "updates": "O agente financeiro está pensando..."}
+        client = self.remote_agent_connections[agent_name]
+
+        if not client:
+            logger.warning(f"Cliente não disponível para {agent_name}")
+            return [{"text": f"Cliente não disponível para {agent_name}"}]
+
+        # Gerenciamento simplificado de task e context ID
+        state = tool_context.state
+        task_id = state.get("task_id", str(uuid.uuid4()))
+        context_id = state.get("context_id", str(uuid.uuid4()))
+        message_id = str(uuid.uuid4())
+
+        payload = {
+            "message": {
+                "role": "user",
+                "parts": [{"type": "text", "text": task}],
+                "messageId": message_id,
+                "taskId": task_id,
+                "contextId": context_id,
+            },
+        }
+
+        try:
+            message_request = SendMessageRequest(
+                id=message_id, params=MessageSendParams.model_validate(payload)
+            )
+            send_response: SendMessageResponse = await client.send_message(message_request)
+            logger.debug("send_response %s", send_response)
+
+            if not isinstance(send_response.root, SendMessageSuccessResponse) or not isinstance(
+                send_response.root.result, Task
+            ):
+                logger.warning("Recebida uma resposta não-sucedida ou não-task")
+                return [{"text": f"Erro ao chamar agente {agent_name}"}]
+
+            response_content = send_response.root.model_dump_json(exclude_none=True)
+            json_content = json.loads(response_content)
+
+            resp = []
+            if json_content.get("result", {}).get("artifacts"):
+                for artifact in json_content["result"]["artifacts"]:
+                    if artifact.get("parts"):
+                        resp.extend(artifact["parts"])
+            return resp
+        except Exception as e:
+            logger.error(f"Erro ao chamar agente {agent_name}: {str(e)}")
+            return [{"text": f"Erro ao chamar agente {agent_name}: {str(e)}"}]
 
 
-# Cria e exporta o agente raiz para o ADK
-root_agent = create_agent()
+def _get_initialized_financial_agent_sync():
+    """Sincronamente cria e inicializa o FinancialOrchestratorAgent."""
+
+    async def _async_main():
+        print("inicializando agente financeiro")
+        financial_agent_instance = await FinancialOrchestratorAgent.create(
+            remote_agent_addresses=REMOTE_AGENTS
+        )
+        print("FinancialOrchestratorAgent inicializado")
+        return financial_agent_instance.create_agent()
+
+    try:
+        return asyncio.run(_async_main())
+    except RuntimeError as e:
+        if "asyncio.run() cannot be called from a running event loop" in str(e):
+            print(
+                f"Aviso: Não foi possível inicializar FinancialOrchestratorAgent com asyncio.run(): {e}. "
+                "Isso pode acontecer se um event loop já estiver rodando (ex: em Jupyter). "
+                "Considere inicializar FinancialOrchestratorAgent dentro de uma função async em sua aplicação."
+            )
+        else:
+            raise
+
+
+root_agent = _get_initialized_financial_agent_sync()
