@@ -1,0 +1,11 @@
+department,amount,supplier,approved_by_legal
+Marketing,2500,Agência XYZ,yes
+Marketing,1800,Agência XYZ,no
+Marketing,3200,Agência XYZ,no
+Finance,4000,Consultoria Alpha,yes
+Finance,1500,Consultoria Alpha,no
+Finance,1500,Fornecedor Beta,no
+HR,2800,Fornecedor Beta,yes
+HR,2500,Fornecedor Beta,no
+Sales,2200,Agência XYZ,yes
+Sales,2800,Consultoria Alpha,yes
