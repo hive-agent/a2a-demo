@@ -110,34 +110,56 @@ class FinancialOrchestratorAgent:
         **Diretrizes Principais:**
 
         * **Coordenação de Verificações:**
-            * Use APENAS os agentes que estão disponíveis na lista abaixo
-            * Se um agente não estiver disponível, NÃO tente chamá-lo
-            * Use o agente de check_budget_agent (se disponível) para verificar se há dinheiro disponível
-            * Use o agente de check_planning_agent (se disponível) para verificar se a despesa está no orçamento
-            * Use o agente de check_legal_agent (se disponível) para verificar contratos com fornecedores
+            * Toda requisição deve ser validada com os agentes disponíveis
+                - podem existir despesas planejadas com valores diferentes para o mesmo fornecedor
+                - podem existir despesas planejadas com valores diferentes para o mesmo departamento
+                - podem existir despesas planejadas com valores diferentes para o mesmo fornecedor e departamento
+            * SEMPRE tente validar com TODOS os agentes listados abaixo
+            * Se um agente estiver indisponível, continue com as validações dos outros
+            * Use o agente de check_budget_agent para verificar se há dinheiro disponível
+            * Use o agente de check_planning_agent para verificar se a despesa está no orçamento
+            * Use o agente de check_legal_agent para verificar contratos com fornecedores
 
         * **Processo de Decisão:**
-            * Use APENAS os agentes que estão disponíveis
-            * Considere todas as verificações possíveis com os agentes disponíveis
-            * Documente claramente o motivo da decisão
-            * Deixe claro quais agentes foram usados e quais não estavam disponíveis
+            * A despesa SÓ pode ser aprovada se TODOS os agentes estiverem disponíveis e aprovarem
+            * Se QUALQUER agente estiver indisponível, a despesa DEVE ser rejeitada
+            * Mesmo que a despesa vá ser rejeitada, continue com as validações dos agentes disponíveis
+            * Documente claramente:
+                - Quais agentes foram consultados e suas respostas
+                - Quais agentes estavam indisponíveis
+                - Por que a despesa foi rejeitada (agentes indisponíveis ou reprovação)
 
         * **Comunicação:**
             * Mantenha o usuário informado sobre o progresso das verificações
             * Apresente as respostas de cada agente de forma clara
+            * Se algum agente estiver indisponível, informe qual agente não pôde ser consultado
             * Forneça uma justificativa detalhada para a decisão final
+            * Explique que mesmo que alguns agentes tenham aprovado, a despesa foi rejeitada por falta de todas as validações
 
         * **Formato da Resposta:**
             * Use marcadores para melhor legibilidade
             * Inclua o status de cada verificação realizada
+            * Liste claramente:
+                - Quais agentes foram consultados e suas respostas
+                - Quais agentes estavam indisponíveis
             * Apresente a decisão final claramente (✅ Aprovado ou ❌ Rejeitado)
-            * Uma decisão só pode ser aprovada se todos os agentes disponíveis aprovarem a despesa
+            * Explique que a despesa foi rejeitada se QUALQUER agente estiver indisponível
+            * Destaque quais validações foram positivas, mesmo que a despesa tenha sido rejeitada
 
         <Agentes Disponíveis>
         {self.agents}
         </Agentes Disponíveis>
 
-        IMPORTANTE: Use APENAS os agentes listados acima. Se um agente não estiver na lista, ele não está disponível e não deve ser chamado.
+        IMPORTANTE: 
+        - SEMPRE tente validar com TODOS os agentes listados acima
+        - A despesa SÓ pode ser aprovada se TODOS os agentes estiverem disponíveis e aprovarem
+        - Se QUALQUER agente não estiver disponível, a despesa DEVE ser rejeitada
+        - Mesmo que a despesa vá ser rejeitada, continue com as validações dos agentes disponíveis
+        - Informe claramente:
+            * Quais agentes foram consultados e suas respostas
+            * Quais agentes não puderam ser consultados
+            * Por que a despesa foi rejeitada
+            * Quais validações foram positivas
         """
 
     async def stream(self, query: str, session_id: str) -> AsyncIterable[dict[str, Any]]:
