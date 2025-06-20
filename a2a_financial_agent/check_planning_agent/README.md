@@ -12,7 +12,7 @@ O agente expõe um serviço que responde se uma despesa específica (departament
 - `agent.py`: Define a lógica do agente e a função de verificação de planejamento.
 - `agent_executor.py`: Executor responsável por orquestrar a execução do agente.
 - `pyproject.toml` e `uv.lock`: Gerenciamento de dependências.
-- `../database/espenses.csv`: Arquivo CSV contendo as despesas planejadas com departamento, valor e fornecedor.
+- `../database/expenses.csv`: Arquivo CSV contendo as despesas planejadas com departamento, valor e fornecedor.
 
 ## Pré-requisitos
 
@@ -45,14 +45,14 @@ O agente irá iniciar um servidor local (por padrão em `localhost:10003`).
 
 ## Como funciona
 
-O agente recebe solicitações informando departamento, valor e fornecedor, e responde se a despesa está planejada no orçamento, consultando o arquivo `../database/espenses.csv`.
+O agente recebe solicitações informando departamento, valor e fornecedor, e responde se a despesa está planejada no orçamento, consultando o arquivo `../database/expenses.csv`.
 
 - Se houver uma linha correspondente com os critérios informados, responde: **"Despesa foi planejada"**
 - Caso contrário, responde: **"Despesa não foi planejada"**
 
 ## Observações
 
-- Para alterar as despesas planejadas, edite o arquivo `../database/espenses.csv`.
+- Para alterar as despesas planejadas, edite o arquivo `../database/expenses.csv`.
 - O agente é focado apenas em consultas de planejamento orçamentário. Para outros tipos de análise, utilize ou integre com outros agentes.
 
 ---

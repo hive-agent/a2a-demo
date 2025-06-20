@@ -13,7 +13,7 @@ O agente expõe um serviço que responde se existe budget disponível para um va
 - `agent_executor.py`: Executor responsável por orquestrar a execução do agente.
 - `pyproject.toml` e `uv.lock`: Gerenciamento de dependências.
 - `../database/current_budget.txt`: Arquivo de texto contendo o valor atual do orçamento disponível (um número).
-- `../database/espenses.csv`: Exemplo de arquivo de despesas (não utilizado diretamente pelo agente, mas pode ser útil para contexto ou integrações futuras).
+- `../database/expenses.csv`: Exemplo de arquivo de despesas (não utilizado diretamente pelo agente, mas pode ser útil para contexto ou integrações futuras).
 
 ## Pré-requisitos
 

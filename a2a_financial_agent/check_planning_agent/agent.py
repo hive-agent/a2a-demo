@@ -21,7 +21,7 @@ def check_planned_expense(department: str, amount: float, supplier: str) -> str:
         Uma string indicando se a despesa foi planejada ou não
     """
     try:
-        expenses_file = Path(__file__).parent.parent / "database" / "espenses.csv"
+        expenses_file = Path(__file__).parent.parent / "database" / "expenses.csv"
         df = pd.read_csv(expenses_file)
         
         # Converte o valor para float para comparação
